@@ -132,22 +132,45 @@ class PaneModel(ObjectStore):
             self.__sort_cache[text] = util.human_sort_key(text_stripped)
             return self.__sort_cache[text], text
 
-    def get_songs(self, paths):
+    def get_songs(self, paths, conjunction=False):
         """Get all songs for the given paths (from a selection e.g.)"""
 
         s = set()
         if not paths:
             return s
 
-        first_path = paths[0]
-        if isinstance(self[first_path][0], AllEntry):
-            for entry in self.itervalues():
-                s.update(entry.songs)
-        else:
+        if conjunction:
+            # Conjonction (logical AND)
+            constraining_entries = []
             for path in paths:
-                s.update(self[path][0].songs)
+                entry = self[path][0]
+                if not isinstance(entry, AllEntry):
+                    constraining_entries.append(entry)
 
-        return s
+            if not constraining_entries:
+                for entry in self.itervalues():
+                    s.update(entry.songs)
+                return s
+
+            s = set(constraining_entries[0].songs)
+            for entry in constraining_entries[1:]:
+                if not s:
+                    return set()
+                s.intersection_update(entry.songs)
+
+            return s
+
+        else:
+            # Disjunction (default logical OR)
+            first_path = paths[0]
+            if isinstance(self[first_path][0], AllEntry):
+                for entry in self.itervalues():
+                    s.update(entry.songs)
+            else:
+                for path in paths:
+                    s.update(self[path][0].songs)
+
+            return s
 
     def get_keys(self, paths):
         return {self[p][0].key for p in paths}

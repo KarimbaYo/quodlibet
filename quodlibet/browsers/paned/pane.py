@@ -309,7 +309,7 @@ class Pane(AllTreeView):
 
     def __get_selected_songs(self, sort=False):
         model, paths = self.get_selection().get_selected_rows()
-        songs = model.get_songs(paths)
+        songs = model.get_songs(paths, True)
         if sort:
             return sorted(songs, key=operator.attrgetter("sort_key"))
         return songs
