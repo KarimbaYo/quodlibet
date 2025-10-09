@@ -161,17 +161,16 @@ class PaneModel(ObjectStore):
 
             return s
 
+        # Disjunction (default logical OR)
+        first_path = paths[0]
+        if isinstance(self[first_path][0], AllEntry):
+            for entry in self.itervalues():
+                s.update(entry.songs)
         else:
-            # Disjunction (default logical OR)
-            first_path = paths[0]
-            if isinstance(self[first_path][0], AllEntry):
-                for entry in self.itervalues():
-                    s.update(entry.songs)
-            else:
-                for path in paths:
-                    s.update(self[path][0].songs)
+            for path in paths:
+                s.update(self[path][0].songs)
 
-            return s
+        return s
 
     def get_keys(self, paths):
         return {self[p][0].key for p in paths}
