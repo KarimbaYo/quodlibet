@@ -1,5 +1,6 @@
 # Copyright 2013 Christoph Reiter
 #        2020-23 Nick Boultbee
+#           2025 Yoann Guerin
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -140,7 +141,7 @@ class PaneModel(ObjectStore):
             return s
 
         if conjunction:
-            # Conjonction (logical AND)
+            # Conjunction (logical AND)
             constraining_entries = []
             for path in paths:
                 entry = self[path][0]

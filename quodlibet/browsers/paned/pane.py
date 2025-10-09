@@ -10,7 +10,7 @@ import operator
 
 from gi.repository import Gtk, Pango, Gdk
 
-from quodlibet import qltk
+from quodlibet import qltk, config
 from quodlibet.qltk.views import AllTreeView, TreeViewColumnButton
 from quodlibet.qltk.songsmenu import SongsMenu
 from quodlibet.qltk.properties import SongProperties
@@ -309,7 +309,8 @@ class Pane(AllTreeView):
 
     def __get_selected_songs(self, sort=False):
         model, paths = self.get_selection().get_selected_rows()
-        songs = model.get_songs(paths, True)
+        conjunction_mode = config.getboolean("browsers", "panes_conjunction")
+        songs = model.get_songs(paths, conjunction_mode)
         if sort:
             return sorted(songs, key=operator.attrgetter("sort_key"))
         return songs

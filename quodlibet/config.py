@@ -108,6 +108,8 @@ INITIAL: dict[str, dict[str, str]] = {
         "panes": "~people\t<~year|[b][i]<~year>[/i][/b] - ><album>",
         # selected pane values
         "pane_selection": "",
+        # conjonction in paned browser multi-selections
+        "panes_conjunction": "false",
         # equal pane width in paned browser
         "equal_pane_width": "true",
         # "global" filter for SearchBar

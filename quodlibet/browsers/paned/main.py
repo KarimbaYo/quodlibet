@@ -3,6 +3,7 @@
 #           2009-2013 Christoph Reiter
 #           2011-2023 Nick Boultbee
 #                2017 Fredrik Strupe
+#                2025 Yoann Guerin
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -22,7 +23,7 @@ from quodlibet.qltk import is_accel
 from quodlibet.qltk.songlist import SongList
 from quodlibet.qltk.completion import LibraryTagCompletion
 from quodlibet.qltk.searchbar import SearchBarBox
-from quodlibet.qltk.x import ScrolledWindow, Align
+from quodlibet.qltk.x import ScrolledWindow, Align, ToggleButton
 from quodlibet.util.library import background_filter
 from quodlibet.util import connect_destroy
 from quodlibet.qltk.paned import ConfigMultiRHPaned
@@ -92,6 +93,14 @@ class PanedBrowser(Browser, util.InstanceTracker):
         select.connect("clicked", self.__select_all)
         sbb.pack_start(select, False, True, 0)
 
+        conj_status = config.getboolean("browsers", "panes_conjunction")
+        conj_button = ToggleButton(label="&" if conj_status else "||")
+        if conj_status:
+            conj_button.set_active(True)
+        conj_button.connect("toggled", self._conjunction_changed)
+        conj_button.set_tooltip_text(_("Toggle conjuction mode for multiple selection"))
+        sbb.pack_start(conj_button, False, True, 0)
+
         prefs = PreferencesButton(self)
         sbb.pack_start(prefs, False, True, 0)
 
@@ -113,6 +122,15 @@ class PanedBrowser(Browser, util.InstanceTracker):
 
     def __destroy(self, *args):
         del self._sb_box
+
+    def _conjunction_changed(self, button):
+        conjunction_mode = not config.getboolean("browsers", "panes_conjunction")
+        if conjunction_mode:
+            button.set_label("&")
+        else:
+            button.set_label("||")
+
+        config.set("browsers", "panes_conjunction", str(conjunction_mode))
 
     def set_column_mode(self, mode):
         hor = Gtk.Orientation.HORIZONTAL
