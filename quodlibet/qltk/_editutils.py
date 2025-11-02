@@ -41,6 +41,18 @@ class OverwriteWarning(WarningMessage):
         self.add_icon_button(_("_Save"), Icons.DOCUMENT_SAVE, self.RESPONSE_SAVE)
         self.set_default_response(Gtk.ResponseType.CANCEL)
 
+        self.apply_to_all_check = Gtk.CheckButton(
+            label=_("Apply to all subsequent files")
+        )
+        self.apply_to_all_check.set_tooltip_text(
+            _("Use the same action (Save or Cancel) for all other files in this batch")
+        )
+
+        self.apply_to_all_check.set_halign(Gtk.Align.CENTER)
+        content_area = self.get_content_area()
+        content_area.pack_end(self.apply_to_all_check, False, False, 0)
+        self.apply_to_all_check.show()
+
 
 class WriteFailedError(ErrorMessage):
     def __init__(self, parent, song):

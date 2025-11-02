@@ -888,12 +888,20 @@ class EditTags(Gtk.VBox):
         win = WritingWindow(self, len(songs))
         win.show()
         all_done = False
+        remembered_response = None
         for song in songs:
             if not song.valid():
-                win.hide()
-                dialog = OverwriteWarning(self, song)
-                resp = dialog.run()
-                win.show()
+                if remembered_response is not None:
+                    resp = remembered_response
+                else:
+                    win.hide()
+                    dialog = OverwriteWarning(self, song)
+                    resp = dialog.run()
+                    if dialog.apply_to_all_check.get_active():
+                        remembered_response = resp
+                    dialog.destroy()
+                    win.show()
+
                 if resp != OverwriteWarning.RESPONSE_SAVE:
                     break
 
