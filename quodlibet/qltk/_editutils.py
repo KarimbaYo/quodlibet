@@ -42,7 +42,7 @@ class OverwriteWarning(WarningMessage):
         self.set_default_response(Gtk.ResponseType.CANCEL)
 
         self.apply_to_all_check = Gtk.CheckButton(
-            label=_("Apply to all subsequent files")
+            label=_("Do not ask again")
         )
         self.apply_to_all_check.set_tooltip_text(
             _("Use the same action (Save or Cancel) for all other files in this batch")
