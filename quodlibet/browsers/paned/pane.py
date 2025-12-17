@@ -1,5 +1,6 @@
 # Copyright 2013 Christoph Reiter
 #           2023 Nick Boultbee
+#           2025 Yoann Guerin
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -8,17 +9,18 @@
 
 import operator
 
-from gi.repository import Gtk, Pango, Gdk
+from gi.repository import Gtk, Pango, Gdk, GdkPixbuf
 
 from quodlibet import qltk
 from quodlibet.qltk.views import AllTreeView, TreeViewColumnButton
 from quodlibet.qltk.songsmenu import SongsMenu
 from quodlibet.qltk.properties import SongProperties
 from quodlibet.qltk.information import Information
+from quodlibet.qltk.cover import get_no_cover_pixbuf
 from quodlibet.qltk import is_accel
 from quodlibet.util import connect_obj
 
-from .models import PaneModel
+from .models import PaneModel, get_album_key_from_entry
 from .util import PaneConfig
 
 
@@ -55,6 +57,35 @@ class Pane(AllTreeView):
         column.set_use_markup(True)
         column.set_sizing(Gtk.TreeViewColumnSizing.FIXED)
         column.set_fixed_width(60)
+
+        if self.config.wants_cover:
+            cover_size = self.config.icon_size
+            self._default_pixbuf = get_no_cover_pixbuf(cover_size, cover_size)
+
+            if self._default_pixbuf is None:
+                self._default_pixbuf = GdkPixbuf.Pixbuf.new(
+                    GdkPixbuf.Colorspace.RGB, True, 8, cover_size, cover_size
+                )
+                self._default_pixbuf.fill(0xCCCCCCFF)
+
+            render_icon = Gtk.CellRendererPixbuf()
+            column.pack_start(render_icon, False)
+
+            def icon_cdf(column, cell, model, iter_, data):
+                entry = model.get_value(iter_)
+                pixbuf = None
+                album_key = get_album_key_from_entry(entry)
+
+                if album_key:
+                    pixbuf = model.get_cover_pixbuf(album_key, size=cover_size)
+
+                if pixbuf is None:
+                    pixbuf = self._default_pixbuf
+
+                cell.set_property("pixbuf", pixbuf)
+                cell.set_property("visible", True)
+
+            column.set_cell_data_func(render_icon, icon_cdf)
 
         render = Gtk.CellRendererText()
         render.set_property("ellipsize", Pango.EllipsizeMode.END)

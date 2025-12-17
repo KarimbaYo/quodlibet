@@ -1,6 +1,7 @@
 # Copyright 2013 Christoph Reiter
 #        2020-23 Nick Boultbee
 #           2021 Jej@github
+#           2025 Yoann Guerin
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -16,6 +17,7 @@ from quodlibet.formats import AudioFile
 from quodlibet.pattern import XMLFromMarkupPattern as XMLFromPattern
 from quodlibet.util.string.date import format_date
 
+ALBUM_COVER_TAG = "<albumcover>"
 
 class PaneConfig:
     """Row pattern format: 'categorize_pattern:display_pattern'
@@ -29,6 +31,13 @@ class PaneConfig:
     """
 
     def __init__(self, row_pattern):
+
+        self.wants_cover = ALBUM_COVER_TAG in row_pattern
+        if self.wants_cover:
+            row_pattern = row_pattern.replace(ALBUM_COVER_TAG, "").strip()
+
+        self.icon_size = config.getint("browsers", "paned_icon_size", 96)
+
         parts = [p.replace(r"\:", ":") for p in (re.split(r"(?<!\\):", row_pattern))]
 
         def is_numeric(s):

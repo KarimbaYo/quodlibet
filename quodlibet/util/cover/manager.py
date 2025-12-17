@@ -1,5 +1,6 @@
 # Copyright 2013 Simonas Kazlauskas
 #      2014-2025 Nick Boultbee
+#           2026 Yoann Guerin
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -312,6 +313,44 @@ class CoverManager(GObject.Object):
     def _total_groupings(self, groups):
         return sum(len(g) for g in groups.values())
 
+    def fetch_album_cover(self, song, size, callback, album_key_context):
+        """Récupère, charge et redimensionne une pochette de manière asynchrone.
+
+        Cette méthode délègue la recherche du fichier (I/O) et le traitement
+        de l'image (CPU/RAM) à un thread secondaire pour ne pas bloquer l'interface.
+
+        Args:
+            song (AudioFile): La chanson utilisée pour trouver la pochette.
+            size (int): La taille cible (largeur/hauteur) pour le redimensionnement.
+            callback (callable): Fonction appelée dans le thread principal avec (pixbuf, album_key_context).
+            album_key_context (object): Donnée contextuelle renvoyée au callback pour identification.
+        """
+        from quodlibet.util.thread import Cancellable, call_async
+
+        cancellable = Cancellable()
+
+        def worker():
+            """Exécuté dans le thread secondaire."""
+
+            fileobj = self.get_cover(song)
+            if not fileobj:
+                return None
+
+            from quodlibet.qltk.image import pixbuf_from_file
+
+            try:
+                with fileobj:
+                    return pixbuf_from_file(fileobj, (size, size))
+            except Exception as e:
+                print_d(f"Erreur lors du chargement de la pochette pour {song}: {e}")
+                return None
+
+        def done(pixbuf):
+            """Exécuté dans le thread principal (Main Loop)."""
+            if callback:
+                callback(pixbuf, album_key_context)
+
+        call_async(worker, cancellable, done)
 
 class CoverData(GObject.GObject):
     """Structured data for results from cover searching"""
