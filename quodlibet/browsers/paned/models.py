@@ -14,8 +14,9 @@ from quodlibet import _
 from quodlibet import app
 from quodlibet import util
 from quodlibet.qltk.models import ObjectStore
-from quodlibet.util import escape, print_w
+from quodlibet.util import escape
 from quodlibet.util.collection import Collection
+
 
 def get_album_key_from_entry(entry):
     """Returns the unique AlbumKey tuple for a model entry."""
@@ -35,6 +36,36 @@ class BaseEntry(Collection):
         self.songs = set(songs or [])
         self.key = key  # not used for sorting!
         self.sort = ()
+
+        # Cover art state management
+        self.cover = None
+        self.scanned = False
+
+    def scan_cover(self, size, scale_factor=1, callback=None, cancel=None):
+        """Scans the cover for this entry.
+
+        Args:
+            size (int): The desired size of the cover.
+            scale_factor (int): The monitor scale factor (HiDPI).
+            callback (callable): Called when scan finishes.
+            cancel (Gio.Cancellable): Cancellation token.
+        """
+        if self.scanned or not self.songs:
+            return
+
+        # Mark as scanned immediately to prevent infinite loops/multiple requests
+        self.scanned = True
+
+        def set_cover_cb(pixbuf):
+            self.cover = pixbuf
+            if callback:
+                callback()
+
+        # Use the standard async fetcher which handles resizing and threading
+        # Pass list(self.songs) because it expects a sequence, not a set
+        app.cover_manager.get_pixbuf_many_async(
+            list(self.songs), size * scale_factor, size * scale_factor, cancel, set_cover_cb
+        )
 
     def all_have(self, tag, value):
         """Check if all songs have tag `tag` set to `value`"""
@@ -118,10 +149,6 @@ class AllEntry(BaseEntry):
 
 
 class PaneModel(ObjectStore):
-    # Attributes for cover image cache
-    _cover_cache = {}
-    _loading_covers = set()
-
     def __init__(self, pattern_config):
         super().__init__()
         self.__sort_cache = {}  # text to sort text cache
@@ -185,6 +212,8 @@ class PaneModel(ObjectStore):
             if isinstance(entry, AllEntry):
                 continue
             entry.songs -= songs
+            # If songs are removed, cover might change, but simpler to keep existing
+            # unless empty
             entry.finalize()
             self.row_changed(self.get_path(iter_), iter_)
             if not entry.songs:
@@ -262,6 +291,9 @@ class PaneModel(ObjectStore):
 
             if key == entry.key:  # Display strings the same
                 entry.songs |= val.songs
+                # New songs might affect the cover
+                if not entry.cover and entry.scanned:
+                    entry.scanned = False
                 entry.finalize()
                 self.row_changed(self.get_path(iter_), iter_)
                 key = None
@@ -375,53 +407,3 @@ class PaneModel(ObjectStore):
             keys.append("")
 
         return keys
-
-    def get_cover_pixbuf(self, album_key, size=96):
-        """Retrieves image from cache or starts asynchronous loading."""
-        if album_key in self._cover_cache:
-            return self._cover_cache[album_key]
-
-        if album_key not in self._loading_covers:
-            self._loading_covers.add(album_key)
-
-            album = app.library.albums.get(album_key)
-
-            if not album or not album.songs:
-                self._loading_covers.discard(album_key)
-                return None
-
-            representative_song = next(iter(album.songs))
-
-            try:
-                app.cover_manager.fetch_album_cover(
-                    representative_song,
-                    size=size,
-                    callback=self._cover_loaded_callback,
-                    album_key_context=album_key
-                )
-            except AttributeError:
-                self._loading_covers.discard(album_key)
-            except Exception as e:
-                print_w(f"Error loading cover {album_key}: {e}")
-                self._loading_covers.discard(album_key)
-
-        return None
-
-    def _cover_loaded_callback(self, pixbuf, album_key_context):
-        """Callback called by CoverManager once image is loaded."""
-        self._update_model_with_cover(album_key_context, pixbuf)
-
-    def _update_model_with_cover(self, album_key, pixbuf):
-        """Updates the cache and notifies the view."""
-        if album_key not in self._loading_covers:
-            return
-
-        self._loading_covers.discard(album_key)
-
-        if pixbuf:
-            self._cover_cache[album_key] = pixbuf
-
-        for iter_, entry in self.iterrows():
-            if get_album_key_from_entry(entry) == album_key:
-                path = self.get_path(iter_)
-                self.row_changed(path, iter_)

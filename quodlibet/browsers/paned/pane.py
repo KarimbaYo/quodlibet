@@ -9,16 +9,18 @@
 
 import operator
 
-from gi.repository import Gtk, Pango, Gdk, GdkPixbuf
+from gi.repository import Gtk, Pango, Gdk, GdkPixbuf, Gio, GLib
+import cairo
 
-from quodlibet import qltk
+from quodlibet import qltk, app
 from quodlibet.qltk.views import AllTreeView, TreeViewColumnButton
 from quodlibet.qltk.songsmenu import SongsMenu
 from quodlibet.qltk.properties import SongProperties
 from quodlibet.qltk.information import Information
 from quodlibet.qltk.cover import get_no_cover_pixbuf
+from quodlibet.qltk.image import add_border_widget, get_surface_for_pixbuf
 from quodlibet.qltk import is_accel
-from quodlibet.util import connect_obj
+from quodlibet.util import connect_obj, DeferredSignal, copool, connect_destroy
 
 from .models import PaneModel, get_album_key_from_entry
 from .util import PaneConfig
@@ -30,6 +32,10 @@ class Pane(AllTreeView):
     TARGET_INFO_QL = 1
     TARGET_INFO_URI_LIST = 2
 
+    # PRELOAD_COUNT: how many rows should be updated
+    # beyond the visible area in both directions (copied from VisibleUpdate in albums/main.py)
+    PRELOAD_COUNT = 35
+
     def __init__(self, library, prefs, next_=None):
         super().__init__()
         self.set_fixed_height_mode(True)
@@ -39,6 +45,12 @@ class Pane(AllTreeView):
         self.__restore_values = None
 
         self.__no_fill = 0
+
+        # Cover scanning management
+        self._cover_cancel = Gio.Cancellable()
+        self.__pending_paths = []
+        self.__update_deferred = None
+        self.__first_expose = True
 
         column = TreeViewColumnButton(title=self.config.title)
 
@@ -56,7 +68,14 @@ class Pane(AllTreeView):
         column.connect("button-press-event", on_column_header_clicked)
         column.set_use_markup(True)
         column.set_sizing(Gtk.TreeViewColumnSizing.FIXED)
-        column.set_fixed_width(60)
+
+        # Fix GTK-Warning about negative content width
+        fixed_width = 60
+        if self.config.wants_cover:
+            # Ensure column is wide enough for cover + border/padding
+            # Typically cover_size + 12px padding
+            fixed_width = max(fixed_width, self.config.icon_size + 12)
+        column.set_fixed_width(fixed_width)
 
         if self.config.wants_cover:
             cover_size = self.config.icon_size
@@ -69,20 +88,25 @@ class Pane(AllTreeView):
                 self._default_pixbuf.fill(0xCCCCCCFF)
 
             render_icon = Gtk.CellRendererPixbuf()
+            # Set fixed size for the renderer to help GTK layout
+            render_icon.set_property("width", cover_size + 8)
+            render_icon.set_property("height", cover_size + 8)
             column.pack_start(render_icon, False)
 
             def icon_cdf(column, cell, model, iter_, data):
                 entry = model.get_value(iter_)
-                pixbuf = None
-                album_key = get_album_key_from_entry(entry)
 
-                if album_key:
-                    pixbuf = model.get_cover_pixbuf(album_key, size=cover_size)
+                # Default surface
+                surface = self._no_cover
 
-                if pixbuf is None:
-                    pixbuf = self._default_pixbuf
+                # If we have a cover, process it
+                if entry.cover:
+                    pixbuf = entry.cover
+                    # Add border and create surface
+                    pixbuf = add_border_widget(pixbuf, self)
+                    surface = get_surface_for_pixbuf(self, pixbuf) or surface
 
-                cell.set_property("pixbuf", pixbuf)
+                cell.set_property("surface", surface)
                 cell.set_property("visible", True)
 
             column.set_cell_data_func(render_icon, icon_cdf)
@@ -141,6 +165,168 @@ class Pane(AllTreeView):
 
         librarian = library.librarian or library
         self.connect("key-press-event", self.__key_pressed, librarian)
+
+        # If covers are enabled, activate the scanning logic
+        if self.config.wants_cover:
+            self._enable_row_update()
+            if app.cover_manager:
+                connect_destroy(app.cover_manager, "cover-changed", self._on_cover_changed)
+
+    @property
+    def _no_cover(self) -> cairo.Surface | None:
+        """Returns a cached cairo surface representing a missing cover"""
+        if not hasattr(self, "_cached_no_cover"):
+            cover_size = self.config.icon_size
+            scale_factor = self.get_scale_factor()
+            pb = get_no_cover_pixbuf(cover_size, cover_size, scale_factor)
+            if pb:
+                self._cached_no_cover = get_surface_for_pixbuf(self, pb)
+            else:
+                self._cached_no_cover = None
+        return self._cached_no_cover
+
+    # --- VisibleUpdate Logic (Adapted from browsers/albums/main.py) ---
+
+    def _enable_row_update(self):
+        # We need to know when the view is drawn to check visibility
+        connect_obj(self, "draw", self.__update_visibility, self)
+
+        # NOTE: self is an AllTreeView which is scrollable, so it has adjustment
+        adj = self.get_vadjustment()
+        if adj:
+            connect_destroy(adj, "value-changed", self.__stop_update, self)
+
+        self.__pending_paths = []
+        self.__update_deferred = DeferredSignal(
+            self.__update_visible_rows, timeout=50, priority=GLib.PRIORITY_LOW
+        )
+        self.__first_expose = True
+
+    def _disable_row_update(self):
+        if self.__update_deferred:
+            self.__update_deferred.abort()
+            self.__update_deferred = None
+
+        if self.__pending_paths:
+            copool.remove(self.__scan_paths)
+
+        self.__pending_paths = []
+
+    def _row_needs_update(self, model, iter_):
+        """Check if row needs scanning. Returns True if not scanned yet."""
+        entry = model.get_value(iter_)
+        # Only scan if not already scanned and has songs
+        return not entry.scanned and entry.songs
+
+    def _update_row(self, model, iter_):
+        """Start the scan for the row."""
+        entry = model.get_value(iter_)
+
+        # Create a row reference to ensure validity during callback
+        path = model.get_path(iter_)
+        tref = Gtk.TreeRowReference.new(model, path)
+
+        def callback():
+            path = tref.get_path()
+            if path is not None:
+                # Notify view that row changed so it redraws
+                model.row_changed(path, model.get_iter(path))
+
+        scale_factor = self.get_scale_factor()
+        entry.scan_cover(
+            size=self.config.icon_size,
+            scale_factor=scale_factor,
+            callback=callback,
+            cancel=self._cover_cancel
+        )
+
+    def __stop_update(self, adj, view):
+        # Stop scanning when scrolling
+        if self.__pending_paths:
+            copool.remove(self.__scan_paths)
+            self.__pending_paths = []
+            self.__update_visibility(view)
+
+    def __update_visibility(self, view, *args):
+        # update all visible rows on first expose event
+        if self.__first_expose:
+            self.__first_expose = False
+            self.__update_visible_rows(view, 0)
+            for _i in self.__scan_paths():
+                pass
+
+        if self.__update_deferred:
+            self.__update_deferred(view, self.PRELOAD_COUNT)
+
+    def __scan_paths(self):
+        # Worker for copool
+        while self.__pending_paths:
+            model, path = self.__pending_paths.pop()
+            try:
+                iter_ = model.get_iter(path)
+            except ValueError:
+                continue
+            self._update_row(model, iter_)
+            yield True
+
+    def __update_visible_rows(self, view, preload):
+        vrange = view.get_visible_range()
+        if vrange is None:
+            return
+
+        model = view.get_model()
+        start, end = vrange
+
+        if not start or not end:
+            return
+
+        start = start.get_indices()[0] - preload - 1
+        end = end.get_indices()[0] + preload
+
+        # Prioritize center rows then outwards
+        vlist = list(range(end, start, -1))
+        top = vlist[: len(vlist) // 2]
+        bottom = vlist[len(vlist) // 2 :]
+        top.reverse()
+
+        vlist_new = []
+        for _i in vlist:
+            if top:
+                vlist_new.append(top.pop())
+            if bottom:
+                vlist_new.append(bottom.pop())
+        vlist_new = filter(lambda s: s >= 0, vlist_new)
+        vlist_new = map(Gtk.TreePath, vlist_new)
+
+        visible_paths = []
+        for path in vlist_new:
+            try:
+                iter_ = model.get_iter(path)
+            except ValueError:
+                continue
+            if self._row_needs_update(model, iter_):
+                visible_paths.append((model, path))
+
+        if not self.__pending_paths and visible_paths:
+            copool.add(self.__scan_paths)
+        self.__pending_paths = visible_paths
+
+    def _on_cover_changed(self, manager, songs):
+        """Called when a cover is downloaded or changed externally."""
+        model = self.get_model()
+        if not model:
+            return
+
+        songs = set(songs) if songs else None
+
+        # Iterate over model to find entries containing affected songs
+        for iter_, entry in model.iterrows():
+            if songs is None or (entry.songs and not entry.songs.isdisjoint(songs)):
+                # Reset scanned status so it gets picked up by update visibility
+                entry.scanned = False
+                model.row_changed(model.get_path(iter_), iter_)
+
+    # ----------------------------------------------------------------------
 
     def __key_pressed(self, view, event, librarian):
         # if ctrl+a is pressed, intercept and select the All entry instead
@@ -206,6 +392,10 @@ class Pane(AllTreeView):
         return self.config.tags
 
     def __destroy(self, *args):
+        # Cancel any pending cover scans
+        self._cover_cancel.cancel()
+        self._disable_row_update()
+
         # needed for gc
         self.__next = None
 
