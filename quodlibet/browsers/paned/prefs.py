@@ -126,7 +126,6 @@ class PatternEditor(Gtk.VBox):
         self.editor.buffer.connect("changed", self.__text_changed, view)
 
         self.title_entry = Gtk.Entry()
-        self.title_entry.set_editable(True)
         self.title_entry.connect("changed", self.__title_changed, view)
 
         selection = view.get_selection()
@@ -141,12 +140,12 @@ class PatternEditor(Gtk.VBox):
         edit_box = Gtk.VBox(spacing=6)
         edit_box.pack_start(sw, True, True, 0)
 
-        lbl_pat = Gtk.Label(label=_("_Pattern content:"))
+        lbl_pat = Gtk.Label(label=_("Pattern content:"))
         lbl_pat.set_alignment(0, 0.5)
         edit_box.pack_start(lbl_pat, False, True, 0)
         edit_box.pack_start(self.editor, True, True, 0)
 
-        lbl_title = Gtk.Label(label=_("_Column title:"))
+        lbl_title = Gtk.Label(label=_("Column title:"))
         lbl_title.set_alignment(0, 0.5)
         edit_box.pack_start(lbl_title, False, True, 0)
         edit_box.pack_start(self.title_entry, False, True, 0)
