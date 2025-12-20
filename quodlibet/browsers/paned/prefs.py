@@ -8,7 +8,7 @@
 # the Free Software Foundation; either version 2 of the License, or
 # (at your option) any later version.
 
-from gi.repository import Gtk
+from gi.repository import Gtk, Gdk, Pango, GObject
 
 from quodlibet import config
 from quodlibet import util
@@ -21,7 +21,7 @@ from quodlibet.qltk import Icons
 from quodlibet.qltk.menubutton import MenuButton
 from quodlibet.qltk.ccb import ConfigCheckButton
 from quodlibet.util import connect_obj
-from .util import get_headers, save_headers
+from .util import get_headers, save_headers, get_titles, save_titles
 
 
 @util.enum
@@ -72,69 +72,65 @@ class PatternEditor(Gtk.VBox):
         ["~people", "album"],
     ]
 
+    # Columns for the ListStore: Pattern, Title, IsPlaceholder
+    (
+        COL_PATTERN,
+        COL_TITLE,
+        COL_IS_PLACEHOLDER
+    ) = range(3)
+
     def __init__(self):
         super().__init__(spacing=6)
 
-        self.__headers = headers = {}
+        self.__presets_patterns = {}
         buttons = []
 
         group = None
-        for tags in self.PRESETS:
-            tied = "~" + "~".join(tags)
+        for patterns in self.PRESETS:
+            tied = "~" + "~".join(patterns)
             group = Gtk.RadioButton(
                 group=group, label="_" + util.tag(tied), use_underline=True
             )
-            headers[group] = tags
+            self.__presets_patterns[group] = patterns
             buttons.append(group)
 
         group = Gtk.RadioButton(group=group, label=_("_Custom"), use_underline=True)
         self.__custom = group
-        headers[group] = []
         buttons.append(group)
 
-        button_box = Gtk.HBox(spacing=6)
-        self.__model = model = Gtk.ListStore(str)
+        # Store: Pattern (str), Title (str), IsPlaceholder (bool)
+        self.__model = model = Gtk.ListStore(str, str, bool)
 
         radio_box = Gtk.VBox(spacing=6)
         for button in buttons:
             radio_box.pack_start(button, False, True, 0)
-            button.connect("toggled", self.__toggled, button_box, model)
+            button.connect("toggled", self.__toggled, model)
 
         self.pack_start(radio_box, False, True, 0)
 
         # List View of columns
-        view = BaseView(model=model)
+        self.view = view = BaseView(model=model)
         view.set_reorderable(True)
-        view.set_headers_visible(False)
+        view.set_headers_visible(True)
         view.get_selection().set_mode(Gtk.SelectionMode.BROWSE)
 
-        # Use PatternEditBox directly
+        self.__add_columns(view)
+
+        # Pattern Editor
         self.editor = PatternEditBox()
         self.editor.set_size_request(-1, 100)
-
-        # HACK: Remove the button box (Revert/Apply) from PatternEditBox/TextEditBox
-        # TextEditBox structure is HBox containing [ScrolledWindow, VBox(Buttons)]
-        # We iterate over children to find the VBox and hide it.
         for child in self.editor.get_children():
             if isinstance(child, Gtk.VBox):
                 child.hide()
                 child.set_no_show_all(True)
-
-        # When text changes in editor, update the selected row in the list
         self.editor.buffer.connect("changed", self.__text_changed, view)
 
-        ctrl_box = Gtk.VBox(spacing=6)
-
-        add = Button(_("_Add"), Icons.LIST_ADD)
-        ctrl_box.pack_start(add, False, True, 0)
-        add.connect("clicked", self.__add, model)
-
-        remove = Button(_("_Remove"), Icons.LIST_REMOVE)
-        ctrl_box.pack_start(remove, False, True, 0)
-        remove.connect("clicked", self.__remove, view)
+        self.title_entry = Gtk.Entry()
+        self.title_entry.set_editable(True)
+        self.title_entry.connect("changed", self.__title_changed, view)
 
         selection = view.get_selection()
-        selection.connect("changed", self.__selection_changed, remove)
+        selection.connect("changed", self.__selection_changed)
 
         sw = Gtk.ScrolledWindow()
         sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
@@ -145,84 +141,217 @@ class PatternEditor(Gtk.VBox):
         edit_box = Gtk.VBox(spacing=6)
         edit_box.pack_start(sw, True, True, 0)
 
-        # Add label for the editor
-        lbl = Gtk.Label(label=_("Column Pattern:"))
-        lbl.set_alignment(0, 0.5)
-        edit_box.pack_start(lbl, False, True, 0)
-        # Pack with expand=True fill=True to take full width
+        lbl_pat = Gtk.Label(label=_("_Pattern content:"))
+        lbl_pat.set_alignment(0, 0.5)
+        edit_box.pack_start(lbl_pat, False, True, 0)
         edit_box.pack_start(self.editor, True, True, 0)
 
-        button_box.pack_start(edit_box, True, True, 0)
-        button_box.pack_start(ctrl_box, False, True, 0)
-        self.pack_start(button_box, True, True, 0)
+        lbl_title = Gtk.Label(label=_("_Column title:"))
+        lbl_title.set_alignment(0, 0.5)
+        edit_box.pack_start(lbl_title, False, True, 0)
+        edit_box.pack_start(self.title_entry, False, True, 0)
 
-        render = Gtk.CellRendererText()
-        def display_func(column, cell, model, iter_, data):
-            text = model.get_value(iter_, 0)
-            # Flatten newlines for list display
-            cell.set_property("text", text.replace("\n", " ↵ "))
+        self.pack_start(edit_box, True, True, 0)
 
-        column = Gtk.TreeViewColumn(None, render)
-        column.set_cell_data_func(render, display_func)
-        view.append_column(column)
+    def __add_columns(self, view):
+        # 1. Number Column
+        render_num = Gtk.CellRendererText()
+        render_num.set_property("scale", 0.8)
+        render_num.set_property("foreground", "grey")
+        col_num = Gtk.TreeViewColumn("#", render_num)
+        col_num.set_resizable(False)
+        col_num.set_fixed_width(30)
+        col_num.set_alignment(0.5)
 
-    @property
-    def headers(self):
-        for button in self.__headers.keys():
-            if button.get_active():
-                if button == self.__custom:
-                    model_headers = [row[0] for row in self.__model]
-                    self.__headers[self.__custom] = model_headers
-                return self.__headers[button]
-        return None
+        def index_data_func(column, cell, model, iter_, data):
+            path = model.get_path(iter_)
+            if path:
+                cell.set_property("text", str(path.get_indices()[0] + 1))
 
-    @headers.setter
-    def headers(self, new_headers):
-        for button, headers in self.__headers.items():
-            if headers == new_headers:
-                button.set_active(True)
-                button.emit("toggled")
-                break
+        col_num.set_cell_data_func(render_num, index_data_func)
+        view.append_column(col_num)
+
+        # 2. Pattern Column
+        render_pat = Gtk.CellRendererText()
+        render_pat.set_property("ellipsize", Pango.EllipsizeMode.END)
+        col_pat = Gtk.TreeViewColumn(_("Pattern"), render_pat)
+        col_pat.set_expand(True)
+        col_pat.set_resizable(True)
+
+        def pattern_data_func(column, cell, model, iter_, data):
+            text = model.get_value(iter_, self.COL_PATTERN)
+            is_placeholder = model.get_value(iter_, self.COL_IS_PLACEHOLDER)
+
+            if is_placeholder:
+                cell.set_property("text", _("Add new..."))
+                cell.set_property("foreground", "grey")
+                cell.set_property("style", Pango.Style.ITALIC)
+            else:
+                cell.set_property("text", text.replace("\n", " ↵ "))
+                cell.set_property("foreground-set", False)
+                cell.set_property("style", Pango.Style.NORMAL)
+
+        col_pat.set_cell_data_func(render_pat, pattern_data_func)
+        view.append_column(col_pat)
+
+        # 3. Title Column
+        render_title = Gtk.CellRendererText()
+        render_title.set_property("ellipsize", Pango.EllipsizeMode.END)
+        render_title.set_property("foreground", "grey")
+        col_title = Gtk.TreeViewColumn(_("Title"), render_title)
+        col_title.set_visible(True)
+        col_title.set_min_width(80)
+        col_title.set_resizable(True)
+
+        def title_data_func(column, cell, model, iter_, data):
+            title = model.get_value(iter_, self.COL_TITLE)
+            is_placeholder = model.get_value(iter_, self.COL_IS_PLACEHOLDER)
+            if is_placeholder:
+                cell.set_property("text", "")
+            else:
+                cell.set_property("text", title)
+
+        col_title.set_cell_data_func(render_title, title_data_func)
+        view.append_column(col_title)
+
+        # 4. Delete Column
+        render_del = Gtk.CellRendererPixbuf()
+        render_del.set_property("icon-name", "edit-delete-symbolic")
+        render_del.set_property("mode", Gtk.CellRendererMode.ACTIVATABLE)
+
+        col_del = Gtk.TreeViewColumn("", render_del)
+        col_del.set_fixed_width(40)
+        col_del.set_alignment(0.5)
+
+        def delete_visible_func(column, cell, model, iter_, data):
+            is_placeholder = model.get_value(iter_, self.COL_IS_PLACEHOLDER)
+            cell.set_property("visible", not is_placeholder)
+
+        col_del.set_cell_data_func(render_del, delete_visible_func)
+        view.append_column(col_del)
+
+        view.connect("button-press-event", self.__delete_clicked, col_del)
+
+    def __delete_clicked(self, view, event, col_del):
+        if event.button != Gdk.BUTTON_PRIMARY:
+            return
+        try:
+            path, col, _x, _y = view.get_path_at_pos(int(event.x), int(event.y))
+        except TypeError:
+            return
+
+        if col == col_del:
+            model = view.get_model()
+            iter_ = model.get_iter(path)
+            is_placeholder = model.get_value(iter_, self.COL_IS_PLACEHOLDER)
+            if not is_placeholder:
+                model.remove(iter_)
+                return True
+        return False
+
+    def set_data(self, patterns, titles):
+        if len(titles) < len(patterns):
+            titles.extend([""] * (len(patterns) - len(titles)))
+        titles = titles[:len(patterns)]
+
+        # Check if matches a preset (patterns match and no titles)
+        matched_preset = None
+        has_titles = any(t for t in titles)
+
+        if not has_titles:
+            for button, preset_patterns in self.__presets_patterns.items():
+                if patterns == preset_patterns:
+                    matched_preset = button
+                    break
+
+        if matched_preset:
+            matched_preset.set_active(True)
+            self.__toggled(matched_preset, self.__model)
         else:
-            self.__headers[self.__custom] = new_headers
             self.__custom.set_active(True)
+            self.__fill_model(self.__model, patterns, titles)
 
-    def __selection_changed(self, selection, remove):
+    def get_data(self):
+        patterns = []
+        titles = []
+        for row in self.__model:
+            if not row[self.COL_IS_PLACEHOLDER]:
+                patterns.append(row[self.COL_PATTERN])
+                titles.append(row[self.COL_TITLE])
+        return patterns, titles
+
+    def __fill_model(self, model, patterns, titles):
+        model.clear()
+        for p, t in zip(patterns, titles):
+            model.append(row=[p, t, False])
+
+        model.append(row=["", "", True])
+
+    def __selection_changed(self, selection):
         model, iter_ = selection.get_selected()
         has_selection = bool(iter_)
-        remove.set_sensitive(has_selection)
         self.editor.set_sensitive(has_selection)
+        self.title_entry.set_sensitive(has_selection)
 
         if iter_:
-            text = model[iter_][0]
+            pattern = model.get_value(iter_, self.COL_PATTERN)
+            title = model.get_value(iter_, self.COL_TITLE)
+            is_placeholder = model.get_value(iter_, self.COL_IS_PLACEHOLDER)
+
+            # Block signals
             self.editor.buffer.handler_block_by_func(self.__text_changed)
-            self.editor.text = text
+            self.title_entry.handler_block_by_func(self.__title_changed)
+
+            if is_placeholder:
+                self.editor.text = ""
+                self.title_entry.set_text("")
+            else:
+                self.editor.text = pattern
+                self.title_entry.set_text(title)
+
             self.editor.buffer.handler_unblock_by_func(self.__text_changed)
+            self.title_entry.handler_unblock_by_func(self.__title_changed)
         else:
             self.editor.text = ""
+            self.title_entry.set_text("")
 
     def __text_changed(self, buffer, view):
         selection = view.get_selection()
         model, iter_ = selection.get_selected()
         if iter_:
-            model[iter_][0] = self.editor.text
+            is_placeholder = model.get_value(iter_, self.COL_IS_PLACEHOLDER)
+            new_text = self.editor.text
 
-    def __add(self, button, model):
-        model.append(row=["<artist>"])
+            if is_placeholder:
+                if new_text.strip():
+                    model.set_value(iter_, self.COL_PATTERN, new_text)
+                    model.set_value(iter_, self.COL_IS_PLACEHOLDER, False)
+                    model.append(row=["", "", True])
+            else:
+                model.set_value(iter_, self.COL_PATTERN, new_text)
 
-    def __remove(self, button, view):
-        view.remove_selection()
+    def __title_changed(self, entry, view):
+        selection = view.get_selection()
+        model, iter_ = selection.get_selected()
+        if iter_:
+            new_text = entry.get_text()
+            model.set_value(iter_, self.COL_TITLE, new_text)
 
-    def __toggled(self, button, edit_widget, model):
-        tags = self.__headers[button]
+    def __toggled(self, button, model):
+        if not button.get_active():
+            return
 
-        if tags:
-            model.clear()
-            for h in tags:
-                model.append(row=[h])
+        is_custom = (button == self.__custom)
 
-        is_custom = button.get_active() and button is self.__custom
-        edit_widget.set_sensitive(is_custom)
+        if not is_custom:
+            patterns = self.__presets_patterns[button]
+            titles = [""] * len(patterns)
+            self.__fill_model(model, patterns, titles)
+
+        # Only custom is editable
+        self.view.set_sensitive(is_custom)
+        self.editor.set_sensitive(is_custom)
+        self.title_entry.set_sensitive(is_custom)
 
 
 class PreferencesButton(Gtk.HBox):
@@ -257,7 +386,7 @@ class Preferences(qltk.UniqueWindow):
         super().__init__()
 
         self.set_transient_for(qltk.get_top_parent(browser))
-        self.set_default_size(500, 550)
+        self.set_default_size(500, 600)
         self.set_border_width(12)
         self.set_title(_("Paned Browser Preferences"))
 
@@ -267,7 +396,7 @@ class Preferences(qltk.UniqueWindow):
         column_mode_frame = qltk.Frame(_("Column layout"), child=column_modes)
 
         editor = PatternEditor()
-        editor.headers = get_headers()
+        editor.set_data(get_headers(), get_titles())
         editor_frame = qltk.Frame(_("Column content"), child=editor)
 
         # -- Options Section --
@@ -326,8 +455,11 @@ class Preferences(qltk.UniqueWindow):
         self.get_child().show_all()
 
     def __apply(self, editor, browser, close, equal_width):
-        if editor.headers != get_headers():
-            save_headers(editor.headers)
+        new_patterns, new_titles = editor.get_data()
+
+        if new_patterns != get_headers() or new_titles != get_titles():
+            save_headers(new_patterns)
+            save_titles(new_titles)
             browser.set_all_panes()
 
         if equal_width.get_active():

@@ -28,7 +28,7 @@ from quodlibet.util import connect_destroy
 from quodlibet.qltk.paned import ConfigMultiRHPaned
 
 from .prefs import PreferencesButton, ColumnMode
-from .util import get_headers
+from .util import get_headers, get_titles
 from .pane import Pane
 
 
@@ -209,10 +209,16 @@ class PanedBrowser(Browser, util.InstanceTracker):
     def refresh_panes(self):
         self.multi_paned.destroy()
 
+        headers = get_headers()
+        titles = get_titles()
+
+        if len(titles) < len(headers):
+            titles.extend([""] * (len(headers) - len(titles)))
+
         # Fill in the pane list. The last pane reports back to us.
         self._panes = [self]
-        for header in reversed(get_headers()):
-            pane = Pane(self._library, header, self._panes[0])
+        for header, title in reversed(list(zip(headers, titles))):
+            pane = Pane(self._library, header, self._panes[0], title=title)
             pane.connect("row-activated", lambda *x: self.songs_activated())
             self._panes.insert(0, pane)
         self._panes.pop()  # remove self

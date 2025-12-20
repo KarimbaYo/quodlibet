@@ -130,3 +130,13 @@ def get_headers():
 def save_headers(headers):
     headers = "\t".join(headers)
     config.set("browsers", "panes", headers)
+
+def get_titles():
+    titles = config.get("browsers", "panes_titles", "")
+    if not titles:
+        return []
+    return titles.split("\t")
+
+def save_titles(titles):
+    titles = "\t".join(titles)
+    config.set("browsers", "panes_titles", titles)

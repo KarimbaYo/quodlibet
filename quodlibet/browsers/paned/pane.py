@@ -36,7 +36,7 @@ class Pane(AllTreeView):
     # beyond the visible area in both directions
     PRELOAD_COUNT = 35
 
-    def __init__(self, library, prefs, next_=None):
+    def __init__(self, library, prefs, next_=None, title=None):
         super().__init__()
         self.set_fixed_height_mode(True)
 
@@ -52,7 +52,8 @@ class Pane(AllTreeView):
         self.__update_deferred = None
         self.__first_expose = True
 
-        column = TreeViewColumnButton(title=self.config.title)
+        column_title = title if title else self.config.title
+        column = TreeViewColumnButton(title=column_title)
 
         def on_column_header_clicked(column, event):
             # In case the column header gets clicked select the "All" entry
