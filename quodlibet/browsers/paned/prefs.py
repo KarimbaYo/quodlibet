@@ -1,6 +1,7 @@
 # Copyright 2013 Christoph Reiter
 #           2015 Nick Boultbee
 #           2017 Fredrik Strupe
+#           2025 Yoann Guerin
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -14,7 +15,7 @@ from quodlibet import util
 from quodlibet import qltk
 from quodlibet import _
 from quodlibet.qltk.views import BaseView
-from quodlibet.qltk.tagscombobox import TagsComboBoxEntry
+from quodlibet.qltk.textedit import PatternEditBox
 from quodlibet.qltk.x import SymbolicIconImage, MenuItem, Button
 from quodlibet.qltk import Icons
 from quodlibet.qltk.menubutton import MenuButton
@@ -50,12 +51,12 @@ class ColumnModeSelection(Gtk.VBox):
             self.pack_start(group, False, True, 0)
             self.buttons.append(group)
 
-        # Connect to signal after the correct radio button has been
-        # selected
         for button in self.buttons:
             button.connect("toggled", self.toggled)
 
     def toggled(self, button):
+        if not button.get_active():
+            return
         selected_mode = ColumnMode.SMALL
         if self.buttons[1].get_active():
             selected_mode = ColumnMode.WIDE
@@ -70,9 +71,6 @@ class PatternEditor(Gtk.VBox):
         ["genre", "~people", "album"],
         ["~people", "album"],
     ]
-    COMPLETION = ["genre", "grouping", "~people", "artist", "album", "~year", "~rating"]
-
-    _COMPLEX_PATTERN_EXAMPLE = "<~year|[b]<~year>[/b]|[i]unknown year[/i]>"
 
     def __init__(self):
         super().__init__(spacing=6)
@@ -104,23 +102,32 @@ class PatternEditor(Gtk.VBox):
 
         self.pack_start(radio_box, False, True, 0)
 
-        example = util.monospace(self._COMPLEX_PATTERN_EXAMPLE)
-        tooltip = _("Tag pattern with optional markup e.g. %(short)s or\n%(long)s") % {
-            "short": "<tt>composer</tt>",
-            "long": example,
-        }
-
-        cb = TagsComboBoxEntry(self.COMPLETION, tooltip_markup=tooltip)
-
+        # List View of columns
         view = BaseView(model=model)
         view.set_reorderable(True)
         view.set_headers_visible(False)
+        view.get_selection().set_mode(Gtk.SelectionMode.BROWSE)
+
+        # Use PatternEditBox directly
+        self.editor = PatternEditBox()
+        self.editor.set_size_request(-1, 100)
+
+        # HACK: Remove the button box (Revert/Apply) from PatternEditBox/TextEditBox
+        # TextEditBox structure is HBox containing [ScrolledWindow, VBox(Buttons)]
+        # We iterate over children to find the VBox and hide it.
+        for child in self.editor.get_children():
+            if isinstance(child, Gtk.VBox):
+                child.hide()
+                child.set_no_show_all(True)
+
+        # When text changes in editor, update the selected row in the list
+        self.editor.buffer.connect("changed", self.__text_changed, view)
 
         ctrl_box = Gtk.VBox(spacing=6)
 
         add = Button(_("_Add"), Icons.LIST_ADD)
         ctrl_box.pack_start(add, False, True, 0)
-        add.connect("clicked", self.__add, model, cb)
+        add.connect("clicked", self.__add, model)
 
         remove = Button(_("_Remove"), Icons.LIST_REMOVE)
         ctrl_box.pack_start(remove, False, True, 0)
@@ -128,30 +135,35 @@ class PatternEditor(Gtk.VBox):
 
         selection = view.get_selection()
         selection.connect("changed", self.__selection_changed, remove)
-        selection.emit("changed")
 
         sw = Gtk.ScrolledWindow()
         sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         sw.set_shadow_type(Gtk.ShadowType.IN)
+        sw.set_min_content_height(120)
         sw.add(view)
 
         edit_box = Gtk.VBox(spacing=6)
-        edit_box.pack_start(cb, False, True, 0)
         edit_box.pack_start(sw, True, True, 0)
+
+        # Add label for the editor
+        lbl = Gtk.Label(label=_("Column Pattern:"))
+        lbl.set_alignment(0, 0.5)
+        edit_box.pack_start(lbl, False, True, 0)
+        # Pack with expand=True fill=True to take full width
+        edit_box.pack_start(self.editor, True, True, 0)
 
         button_box.pack_start(edit_box, True, True, 0)
         button_box.pack_start(ctrl_box, False, True, 0)
         self.pack_start(button_box, True, True, 0)
 
         render = Gtk.CellRendererText()
-        render.set_property("editable", True)
+        def display_func(column, cell, model, iter_, data):
+            text = model.get_value(iter_, 0)
+            # Flatten newlines for list display
+            cell.set_property("text", text.replace("\n", " ↵ "))
 
-        def edited_cb(render, path, text, model):
-            model[path][0] = text
-
-        render.connect("edited", edited_cb, model)
-
-        column = Gtk.TreeViewColumn(None, render, text=0)
+        column = Gtk.TreeViewColumn(None, render)
+        column.set_cell_data_func(render, display_func)
         view.append_column(column)
 
     @property
@@ -176,11 +188,27 @@ class PatternEditor(Gtk.VBox):
             self.__custom.set_active(True)
 
     def __selection_changed(self, selection, remove):
-        remove.set_sensitive(bool(selection.get_selected()[1]))
+        model, iter_ = selection.get_selected()
+        has_selection = bool(iter_)
+        remove.set_sensitive(has_selection)
+        self.editor.set_sensitive(has_selection)
 
-    def __add(self, button, model, cb):
-        if cb.tag:
-            model.append(row=[cb.tag])
+        if iter_:
+            text = model[iter_][0]
+            self.editor.buffer.handler_block_by_func(self.__text_changed)
+            self.editor.text = text
+            self.editor.buffer.handler_unblock_by_func(self.__text_changed)
+        else:
+            self.editor.text = ""
+
+    def __text_changed(self, buffer, view):
+        selection = view.get_selection()
+        model, iter_ = selection.get_selected()
+        if iter_:
+            model[iter_][0] = self.editor.text
+
+    def __add(self, button, model):
+        model.append(row=["<artist>"])
 
     def __remove(self, button, view):
         view.remove_selection()
@@ -193,7 +221,8 @@ class PatternEditor(Gtk.VBox):
             for h in tags:
                 model.append(row=[h])
 
-        edit_widget.set_sensitive(button.get_active() and button is self.__custom)
+        is_custom = button.get_active() and button is self.__custom
+        edit_widget.set_sensitive(is_custom)
 
 
 class PreferencesButton(Gtk.HBox):
@@ -228,9 +257,8 @@ class Preferences(qltk.UniqueWindow):
         super().__init__()
 
         self.set_transient_for(qltk.get_top_parent(browser))
-        self.set_default_size(350, 300)
+        self.set_default_size(500, 550)
         self.set_border_width(12)
-
         self.set_title(_("Paned Browser Preferences"))
 
         vbox = Gtk.VBox(spacing=12)
@@ -242,9 +270,33 @@ class Preferences(qltk.UniqueWindow):
         editor.headers = get_headers()
         editor_frame = qltk.Frame(_("Column content"), child=editor)
 
+        # -- Options Section --
+        options_box = Gtk.VBox(spacing=6)
+
         equal_width = ConfigCheckButton(
             _("Equal pane width"), "browsers", "equal_pane_width", populate=True
         )
+        options_box.pack_start(equal_width, False, True, 0)
+
+        # Cover Size SpinButton
+        size_box = Gtk.HBox(spacing=12)
+        size_label = Gtk.Label(label=_("Cover size:"))
+        size_label.set_alignment(0, 0.5)
+
+        current_size = config.getint("browsers", "paned_cover_size", 96)
+        adj = Gtk.Adjustment(value=current_size, lower=16, upper=512, step_increment=8)
+        spin = Gtk.SpinButton(adjustment=adj)
+
+        def on_size_changed(spin):
+            config.set("browsers", "paned_cover_size", str(int(spin.get_value())))
+
+        spin.connect("value-changed", on_size_changed)
+
+        size_box.pack_start(size_label, False, False, 0)
+        size_box.pack_start(spin, False, False, 0)
+        options_box.pack_start(size_box, False, True, 0)
+
+        options_frame = qltk.Frame(_("Options"), child=options_box)
 
         apply_ = Button(_("_Apply"))
         connect_obj(
@@ -257,7 +309,7 @@ class Preferences(qltk.UniqueWindow):
         box = Gtk.HButtonBox()
         box.set_spacing(6)
         box.set_layout(Gtk.ButtonBoxStyle.EDGE)
-        box.pack_start(equal_width, True, True, 0)
+
         box.pack_start(apply_, False, False, 0)
         self.use_header_bar()
         if not self.has_close_button():
@@ -265,6 +317,7 @@ class Preferences(qltk.UniqueWindow):
 
         vbox.pack_start(column_mode_frame, False, False, 0)
         vbox.pack_start(editor_frame, True, True, 0)
+        vbox.pack_start(options_frame, False, False, 0)
         vbox.pack_start(box, False, True, 0)
 
         self.add(vbox)

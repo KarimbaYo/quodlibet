@@ -33,7 +33,7 @@ class Pane(AllTreeView):
     TARGET_INFO_URI_LIST = 2
 
     # PRELOAD_COUNT: how many rows should be updated
-    # beyond the visible area in both directions (copied from VisibleUpdate in albums/main.py)
+    # beyond the visible area in both directions
     PRELOAD_COUNT = 35
 
     def __init__(self, library, prefs, next_=None):
@@ -69,16 +69,13 @@ class Pane(AllTreeView):
         column.set_use_markup(True)
         column.set_sizing(Gtk.TreeViewColumnSizing.FIXED)
 
-        # Fix GTK-Warning about negative content width
         fixed_width = 60
         if self.config.wants_cover:
-            # Ensure column is wide enough for cover + border/padding
-            # Typically cover_size + 12px padding
-            fixed_width = max(fixed_width, self.config.icon_size + 12)
+            fixed_width = max(fixed_width, self.config.cover_size + 12)
         column.set_fixed_width(fixed_width)
 
         if self.config.wants_cover:
-            cover_size = self.config.icon_size
+            cover_size = self.config.cover_size
             self._default_pixbuf = get_no_cover_pixbuf(cover_size, cover_size)
 
             if self._default_pixbuf is None:
@@ -88,7 +85,6 @@ class Pane(AllTreeView):
                 self._default_pixbuf.fill(0xCCCCCCFF)
 
             render_icon = Gtk.CellRendererPixbuf()
-            # Set fixed size for the renderer to help GTK layout
             render_icon.set_property("width", cover_size + 8)
             render_icon.set_property("height", cover_size + 8)
             column.pack_start(render_icon, False)
@@ -96,13 +92,11 @@ class Pane(AllTreeView):
             def icon_cdf(column, cell, model, iter_, data):
                 entry = model.get_value(iter_)
 
-                # Default surface
                 surface = self._no_cover
 
                 # If we have a cover, process it
                 if entry.cover:
                     pixbuf = entry.cover
-                    # Add border and create surface
                     pixbuf = add_border_widget(pixbuf, self)
                     surface = get_surface_for_pixbuf(self, pixbuf) or surface
 
@@ -113,6 +107,8 @@ class Pane(AllTreeView):
 
         render = Gtk.CellRendererText()
         render.set_property("ellipsize", Pango.EllipsizeMode.END)
+        render.set_property("wrap-mode", Pango.WrapMode.WORD_CHAR)
+
         column.pack_start(render, True)
 
         def text_cdf(column, cell, model, iter_, data):
@@ -176,7 +172,7 @@ class Pane(AllTreeView):
     def _no_cover(self) -> cairo.Surface | None:
         """Returns a cached cairo surface representing a missing cover"""
         if not hasattr(self, "_cached_no_cover"):
-            cover_size = self.config.icon_size
+            cover_size = self.config.cover_size
             scale_factor = self.get_scale_factor()
             pb = get_no_cover_pixbuf(cover_size, cover_size, scale_factor)
             if pb:
@@ -234,7 +230,7 @@ class Pane(AllTreeView):
 
         scale_factor = self.get_scale_factor()
         entry.scan_cover(
-            size=self.config.icon_size,
+            size=self.config.cover_size,
             scale_factor=scale_factor,
             callback=callback,
             cancel=self._cover_cancel

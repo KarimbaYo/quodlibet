@@ -19,6 +19,7 @@ from quodlibet.util.string.date import format_date
 
 ALBUM_COVER_TAG = "<albumcover>"
 
+
 class PaneConfig:
     """Row pattern format: 'categorize_pattern:display_pattern'
 
@@ -34,9 +35,11 @@ class PaneConfig:
 
         self.wants_cover = ALBUM_COVER_TAG in row_pattern
         if self.wants_cover:
+            # We strip whitespace but keep internal newlines for multi-line support
             row_pattern = row_pattern.replace(ALBUM_COVER_TAG, "").strip()
 
-        self.icon_size = config.getint("browsers", "paned_icon_size", 96)
+        # Changed from paned_icon_size to paned_cover_size as requested
+        self.cover_size = config.getint("browsers", "paned_cover_size", 96)
 
         parts = [p.replace(r"\:", ":") for p in (re.split(r"(?<!\\):", row_pattern))]
 
@@ -44,7 +47,7 @@ class PaneConfig:
             return s[:2] == "~#" and "~" not in s[2:]
 
         def is_pattern(s):
-            return "<" in s
+            return "<" in s or "\n" in s
 
         def f_round(s):
             return isinstance(s, float) and f"{s:.2f}" or s
@@ -62,6 +65,7 @@ class PaneConfig:
         if is_pattern(cat):
             title = util.pattern(cat, esc=True, markup=True)
             try:
+                # Use Markup pattern to support Pango markup in multi-line text
                 pc = XMLFromPattern(cat)
             except ValueError:
                 pc = XMLFromPattern("")
