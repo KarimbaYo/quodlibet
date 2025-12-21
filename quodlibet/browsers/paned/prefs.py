@@ -72,7 +72,6 @@ class PatternEditor(Gtk.VBox):
         ["~people", "album"],
     ]
 
-    # Columns for the ListStore: Pattern, Title, IsPlaceholder
     (
         COL_PATTERN,
         COL_TITLE,
@@ -98,17 +97,14 @@ class PatternEditor(Gtk.VBox):
         self.__custom = group
         buttons.append(group)
 
-        # Store: Pattern (str), Title (str), IsPlaceholder (bool)
+        # Store: Pattern, Title, IsPlaceholder
         self.__model = model = Gtk.ListStore(str, str, bool)
 
-        radio_box = Gtk.VBox(spacing=6)
+        self.presets_box = Gtk.VBox(spacing=6)
         for button in buttons:
-            radio_box.pack_start(button, False, True, 0)
+            self.presets_box.pack_start(button, False, True, 0)
             button.connect("toggled", self.__toggled, model)
 
-        self.pack_start(radio_box, False, True, 0)
-
-        # List View of columns
         self.view = view = BaseView(model=model)
         view.set_reorderable(True)
         view.set_headers_visible(True)
@@ -159,6 +155,7 @@ class PatternEditor(Gtk.VBox):
         render_num.set_property("foreground", "grey")
         col_num = Gtk.TreeViewColumn("#", render_num)
         col_num.set_resizable(False)
+        col_num.set_expand(False)
         col_num.set_fixed_width(30)
         col_num.set_alignment(0.5)
 
@@ -174,8 +171,9 @@ class PatternEditor(Gtk.VBox):
         render_pat = Gtk.CellRendererText()
         render_pat.set_property("ellipsize", Pango.EllipsizeMode.END)
         col_pat = Gtk.TreeViewColumn(_("Pattern"), render_pat)
-        col_pat.set_expand(True)
+        col_pat.set_min_width(200)
         col_pat.set_resizable(True)
+        col_pat.set_expand(True)
 
         def pattern_data_func(column, cell, model, iter_, data):
             text = model.get_value(iter_, self.COL_PATTERN)
@@ -196,11 +194,10 @@ class PatternEditor(Gtk.VBox):
         # 3. Title Column
         render_title = Gtk.CellRendererText()
         render_title.set_property("ellipsize", Pango.EllipsizeMode.END)
-        render_title.set_property("foreground", "grey")
         col_title = Gtk.TreeViewColumn(_("Title"), render_title)
         col_title.set_visible(True)
+        col_title.set_expand(True)
         col_title.set_min_width(80)
-        col_title.set_resizable(True)
 
         def title_data_func(column, cell, model, iter_, data):
             title = model.get_value(iter_, self.COL_TITLE)
@@ -221,6 +218,8 @@ class PatternEditor(Gtk.VBox):
         col_del = Gtk.TreeViewColumn("", render_del)
         col_del.set_fixed_width(40)
         col_del.set_alignment(0.5)
+        col_del.set_resizable(False)
+        col_del.set_expand(False)
 
         def delete_visible_func(column, cell, model, iter_, data):
             is_placeholder = model.get_value(iter_, self.COL_IS_PLACEHOLDER)
@@ -253,7 +252,6 @@ class PatternEditor(Gtk.VBox):
             titles.extend([""] * (len(patterns) - len(titles)))
         titles = titles[:len(patterns)]
 
-        # Check if matches a preset (patterns match and no titles)
         matched_preset = None
         has_titles = any(t for t in titles)
 
@@ -385,28 +383,36 @@ class Preferences(qltk.UniqueWindow):
         super().__init__()
 
         self.set_transient_for(qltk.get_top_parent(browser))
-        self.set_default_size(500, 600)
+        self.set_default_size(550, 500)
         self.set_border_width(12)
         self.set_title(_("Paned Browser Preferences"))
 
         vbox = Gtk.VBox(spacing=12)
 
+        top_hbox = Gtk.HBox(spacing=12)
+
         column_modes = ColumnModeSelection(browser)
         column_mode_frame = qltk.Frame(_("Column layout"), child=column_modes)
+        top_hbox.pack_start(column_mode_frame, True, True, 0)
 
         editor = PatternEditor()
         editor.set_data(get_headers(), get_titles())
-        editor_frame = qltk.Frame(_("Column content"), child=editor)
 
-        # -- Options Section --
-        options_box = Gtk.VBox(spacing=6)
+        column_content_frame = qltk.Frame(_("Column content"), child=editor.presets_box)
+        top_hbox.pack_start(column_content_frame, True, True, 0)
+
+        vbox.pack_start(top_hbox, False, False, 0)
+
+        editor_frame = qltk.Frame(_("Pattern editor"), child=editor)
+        vbox.pack_start(editor_frame, True, True, 0)
+
+        options_box = Gtk.HBox(spacing=12)
 
         equal_width = ConfigCheckButton(
             _("Equal pane width"), "browsers", "equal_pane_width", populate=True
         )
-        options_box.pack_start(equal_width, False, True, 0)
+        options_box.pack_start(equal_width, True, True, 0)
 
-        # Cover Size SpinButton
         size_box = Gtk.HBox(spacing=12)
         size_label = Gtk.Label(label=_("Cover size:"))
         size_label.set_alignment(0, 0.5)
@@ -422,9 +428,10 @@ class Preferences(qltk.UniqueWindow):
 
         size_box.pack_start(size_label, False, False, 0)
         size_box.pack_start(spin, False, False, 0)
-        options_box.pack_start(size_box, False, True, 0)
+        options_box.pack_start(size_box, True, True, 0)
 
         options_frame = qltk.Frame(_("Options"), child=options_box)
+        vbox.pack_start(options_frame, False, False, 0)
 
         apply_ = Button(_("_Apply"))
         connect_obj(
@@ -443,9 +450,6 @@ class Preferences(qltk.UniqueWindow):
         if not self.has_close_button():
             box.pack_start(cancel, True, True, 0)
 
-        vbox.pack_start(column_mode_frame, False, False, 0)
-        vbox.pack_start(editor_frame, True, True, 0)
-        vbox.pack_start(options_frame, False, False, 0)
         vbox.pack_start(box, False, True, 0)
 
         self.add(vbox)

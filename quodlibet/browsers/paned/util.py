@@ -133,10 +133,15 @@ def save_headers(headers):
 
 def get_titles():
     titles = config.get("browsers", "panes_titles", "")
+
     if not titles:
         return []
+
+    if titles.startswith("|"):
+        titles = titles[1:]
+
     return titles.split("\t")
 
 def save_titles(titles):
-    titles = "\t".join(titles)
-    config.set("browsers", "panes_titles", titles)
+    titles_str = "|" + "\t".join(titles)
+    config.set("browsers", "panes_titles", titles_str)
