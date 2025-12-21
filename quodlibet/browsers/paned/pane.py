@@ -22,7 +22,7 @@ from quodlibet.qltk.image import add_border_widget, get_surface_for_pixbuf
 from quodlibet.qltk import is_accel
 from quodlibet.util import connect_obj, DeferredSignal, copool, connect_destroy
 
-from .models import PaneModel, get_album_key_from_entry
+from .models import PaneModel, get_album_key_from_entry, AllEntry
 from .util import PaneConfig
 
 
@@ -34,7 +34,7 @@ class Pane(AllTreeView):
 
     # PRELOAD_COUNT: how many rows should be updated
     # beyond the visible area in both directions
-    PRELOAD_COUNT = 35
+    PRELOAD_COUNT = 15
 
     def __init__(self, library, prefs, next_=None, title=None):
         super().__init__()
@@ -93,13 +93,14 @@ class Pane(AllTreeView):
             def icon_cdf(column, cell, model, iter_, data):
                 entry = model.get_value(iter_)
 
-                surface = self._no_cover
-
-                # If we have a cover, process it
-                if entry.cover:
+                if self._is_multi_album(entry):
+                    surface = self._multi_cover
+                elif entry.cover:
                     pixbuf = entry.cover
                     pixbuf = add_border_widget(pixbuf, self)
-                    surface = get_surface_for_pixbuf(self, pixbuf) or surface
+                    surface = get_surface_for_pixbuf(self, pixbuf) or self._no_cover
+                else:
+                    surface = self._no_cover
 
                 cell.set_property("surface", surface)
                 cell.set_property("visible", True)
@@ -163,7 +164,6 @@ class Pane(AllTreeView):
         librarian = library.librarian or library
         self.connect("key-press-event", self.__key_pressed, librarian)
 
-        # If covers are enabled, activate the scanning logic
         if self.config.wants_cover:
             self._enable_row_update()
             if app.cover_manager:
@@ -175,20 +175,47 @@ class Pane(AllTreeView):
         if not hasattr(self, "_cached_no_cover"):
             cover_size = self.config.cover_size
             scale_factor = self.get_scale_factor()
-            pb = get_no_cover_pixbuf(cover_size, cover_size, scale_factor)
+            pb = get_no_cover_pixbuf(cover_size, cover_size, scale_factor, "quodlibet-missing-cover")
             if pb:
                 self._cached_no_cover = get_surface_for_pixbuf(self, pb)
             else:
                 self._cached_no_cover = None
         return self._cached_no_cover
 
-    # --- VisibleUpdate Logic (Adapted from browsers/albums/main.py) ---
+    @property
+    def _multi_cover(self) -> cairo.Surface | None:
+        """Returns a cached cairo surface representing multiple covers"""
+        if not hasattr(self, "_cached_multi_cover"):
+            cover_size = self.config.cover_size
+            scale_factor = self.get_scale_factor()
+            pb = get_no_cover_pixbuf(cover_size, cover_size, scale_factor, "quodlibet-multi-cd")
+            if pb:
+                self._cached_multi_cover = get_surface_for_pixbuf(self, pb)
+            else:
+                self._cached_multi_cover = None
+        return self._cached_multi_cover
+
+    def _is_multi_album(self, entry):
+        if isinstance(entry, AllEntry):
+            return True
+
+        if not entry.songs:
+            return False
+
+        iterator = iter(entry.songs)
+        try:
+            first_key = next(iterator).album_key
+            for s in iterator:
+                if s.album_key != first_key:
+                    return True
+        except StopIteration:
+            pass
+
+        return False
 
     def _enable_row_update(self):
-        # We need to know when the view is drawn to check visibility
         connect_obj(self, "draw", self.__update_visibility, self)
 
-        # NOTE: self is an AllTreeView which is scrollable, so it has adjustment
         adj = self.get_vadjustment()
         if adj:
             connect_destroy(adj, "value-changed", self.__stop_update, self)
@@ -212,21 +239,22 @@ class Pane(AllTreeView):
     def _row_needs_update(self, model, iter_):
         """Check if row needs scanning. Returns True if not scanned yet."""
         entry = model.get_value(iter_)
-        # Only scan if not already scanned and has songs
+
+        if self._is_multi_album(entry):
+            return False
+
         return not entry.scanned and entry.songs
 
     def _update_row(self, model, iter_):
         """Start the scan for the row."""
         entry = model.get_value(iter_)
 
-        # Create a row reference to ensure validity during callback
         path = model.get_path(iter_)
         tref = Gtk.TreeRowReference.new(model, path)
 
         def callback():
             path = tref.get_path()
             if path is not None:
-                # Notify view that row changed so it redraws
                 model.row_changed(path, model.get_iter(path))
 
         scale_factor = self.get_scale_factor()
@@ -238,7 +266,6 @@ class Pane(AllTreeView):
         )
 
     def __stop_update(self, adj, view):
-        # Stop scanning when scrolling
         if self.__pending_paths:
             copool.remove(self.__scan_paths)
             self.__pending_paths = []
@@ -256,7 +283,6 @@ class Pane(AllTreeView):
             self.__update_deferred(view, self.PRELOAD_COUNT)
 
     def __scan_paths(self):
-        # Worker for copool
         while self.__pending_paths:
             model, path = self.__pending_paths.pop()
             try:
@@ -280,7 +306,6 @@ class Pane(AllTreeView):
         start = start.get_indices()[0] - preload - 1
         end = end.get_indices()[0] + preload
 
-        # Prioritize center rows then outwards
         vlist = list(range(end, start, -1))
         top = vlist[: len(vlist) // 2]
         bottom = vlist[len(vlist) // 2 :]
@@ -316,14 +341,10 @@ class Pane(AllTreeView):
 
         songs = set(songs) if songs else None
 
-        # Iterate over model to find entries containing affected songs
         for iter_, entry in model.iterrows():
             if songs is None or (entry.songs and not entry.songs.isdisjoint(songs)):
-                # Reset scanned status so it gets picked up by update visibility
                 entry.scanned = False
                 model.row_changed(model.get_path(iter_), iter_)
-
-    # ----------------------------------------------------------------------
 
     def __key_pressed(self, view, event, librarian):
         # if ctrl+a is pressed, intercept and select the All entry instead
@@ -389,11 +410,9 @@ class Pane(AllTreeView):
         return self.config.tags
 
     def __destroy(self, *args):
-        # Cancel any pending cover scans
         self._cover_cancel.cancel()
         self._disable_row_update()
 
-        # needed for gc
         self.__next = None
 
     def __search_func(self, model, column, key, iter_, data):

@@ -88,8 +88,15 @@ class BigCenteredImage(qltk.Window):
         self.destroy()
 
 
-def get_no_cover_pixbuf(width, height, scale_factor=1):
-    """A no-cover pixbuf at maximum width x height"""
+def get_no_cover_pixbuf(width, height, scale_factor=1, icon_name="quodlibet-missing-cover"):
+    """A no-cover pixbuf at maximum width x height.
+
+    Args:
+        width (int): Target width
+        height (int): Target height
+        scale_factor (int): Monitor scale factor
+        icon_name (str): The name of the icon to look up in the theme
+    """
 
     # win32 workaround: https://bugzilla.gnome.org/show_bug.cgi?id=721062
 
@@ -98,7 +105,7 @@ def get_no_cover_pixbuf(width, height, scale_factor=1):
 
     size = max(width, height)
     theme = Gtk.IconTheme.get_default()
-    icon_info = theme.lookup_icon("quodlibet-missing-cover", size, 0)
+    icon_info = theme.lookup_icon(icon_name, size, 0)
     if icon_info is None:
         return None
 
