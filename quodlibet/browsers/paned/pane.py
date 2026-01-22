@@ -122,7 +122,8 @@ class Pane(AllTreeView):
 
         render_count = Gtk.CellRendererText()
         render_count.set_property("xalign", 1.0)
-        render_count.set_property("max-width-chars", 5)
+        render_count.set_property("alignment", Pango.Alignment.RIGHT)
+        render_count.set_property("max-width-chars", 7)
         column.pack_end(render_count, True)
         # Tiny columns break too much rendering
         column.set_min_width(150)
