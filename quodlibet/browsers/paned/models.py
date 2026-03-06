@@ -20,7 +20,7 @@ from quodlibet.util.collection import Collection
 
 def get_album_key_from_entry(entry):
     """Returns the unique AlbumKey tuple for a model entry."""
-    if not hasattr(entry, 'songs') or not entry.songs:
+    if not hasattr(entry, "songs") or not entry.songs:
         return None
 
     first_song = next(iter(entry.songs), None)
@@ -64,7 +64,11 @@ class BaseEntry(Collection):
         # Use the standard async fetcher which handles resizing and threading
         # Pass list(self.songs) because it expects a sequence, not a set
         app.cover_manager.get_pixbuf_many_async(
-            list(self.songs), size * scale_factor, size * scale_factor, cancel, set_cover_cb
+            list(self.songs),
+            size * scale_factor,
+            size * scale_factor,
+            cancel,
+            set_cover_cb,
         )
 
     def all_have(self, tag, value):

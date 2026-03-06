@@ -8,7 +8,7 @@
 # the Free Software Foundation; either version 2 of the License, or
 # (at your option) any later version.
 
-from gi.repository import Gtk, Gdk, Pango, GObject
+from gi.repository import Gtk, Gdk, Pango
 
 from quodlibet import config
 from quodlibet import util
@@ -72,11 +72,7 @@ class PatternEditor(Gtk.VBox):
         ["~people", "album"],
     ]
 
-    (
-        COL_PATTERN,
-        COL_TITLE,
-        COL_IS_PLACEHOLDER
-    ) = range(3)
+    (COL_PATTERN, COL_TITLE, COL_IS_PLACEHOLDER) = range(3)
 
     def __init__(self):
         super().__init__(spacing=6)
@@ -180,7 +176,7 @@ class PatternEditor(Gtk.VBox):
             is_placeholder = model.get_value(iter_, self.COL_IS_PLACEHOLDER)
 
             if is_placeholder:
-                cell.set_property("text", _("Add new..."))
+                cell.set_property("text", _("Add new…"))
                 cell.set_property("foreground", "grey")
                 cell.set_property("style", Pango.Style.ITALIC)
             else:
@@ -232,11 +228,11 @@ class PatternEditor(Gtk.VBox):
 
     def __delete_clicked(self, view, event, col_del):
         if event.button != Gdk.BUTTON_PRIMARY:
-            return
+            return None
         try:
             path, col, _x, _y = view.get_path_at_pos(int(event.x), int(event.y))
         except TypeError:
-            return
+            return None
 
         if col == col_del:
             model = view.get_model()
@@ -250,7 +246,7 @@ class PatternEditor(Gtk.VBox):
     def set_data(self, patterns, titles):
         if len(titles) < len(patterns):
             titles.extend([""] * (len(patterns) - len(titles)))
-        titles = titles[:len(patterns)]
+        titles = titles[: len(patterns)]
 
         matched_preset = None
         has_titles = any(t for t in titles)
@@ -338,7 +334,7 @@ class PatternEditor(Gtk.VBox):
         if not button.get_active():
             return
 
-        is_custom = (button == self.__custom)
+        is_custom = button == self.__custom
 
         if not is_custom:
             patterns = self.__presets_patterns[button]

@@ -566,7 +566,8 @@ class TPanedPreferences(TestCase):
 
     def test_editor(self):
         x = PatternEditor()
-        x.headers = x.headers
+        patterns, titles = x.get_data()
+        x.set_data(patterns, titles)
         x.destroy()
         x.destroy()
 

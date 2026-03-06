@@ -22,7 +22,7 @@ from quodlibet.qltk.image import add_border_widget, get_surface_for_pixbuf
 from quodlibet.qltk import is_accel
 from quodlibet.util import connect_obj, DeferredSignal, copool, connect_destroy
 
-from .models import PaneModel, get_album_key_from_entry, AllEntry
+from .models import PaneModel, AllEntry
 from .util import PaneConfig
 
 
@@ -168,7 +168,9 @@ class Pane(AllTreeView):
         if self.config.wants_cover:
             self._enable_row_update()
             if app.cover_manager:
-                connect_destroy(app.cover_manager, "cover-changed", self._on_cover_changed)
+                connect_destroy(
+                    app.cover_manager, "cover-changed", self._on_cover_changed
+                )
 
     @property
     def _no_cover(self) -> cairo.Surface | None:
@@ -176,7 +178,9 @@ class Pane(AllTreeView):
         if not hasattr(self, "_cached_no_cover"):
             cover_size = self.config.cover_size
             scale_factor = self.get_scale_factor()
-            pb = get_no_cover_pixbuf(cover_size, cover_size, scale_factor, "quodlibet-missing-cover")
+            pb = get_no_cover_pixbuf(
+                cover_size, cover_size, scale_factor, "quodlibet-missing-cover"
+            )
             if pb:
                 self._cached_no_cover = get_surface_for_pixbuf(self, pb)
             else:
@@ -189,7 +193,9 @@ class Pane(AllTreeView):
         if not hasattr(self, "_cached_multi_cover"):
             cover_size = self.config.cover_size
             scale_factor = self.get_scale_factor()
-            pb = get_no_cover_pixbuf(cover_size, cover_size, scale_factor, "quodlibet-multi-cd")
+            pb = get_no_cover_pixbuf(
+                cover_size, cover_size, scale_factor, "quodlibet-multi-cd"
+            )
             if pb:
                 self._cached_multi_cover = get_surface_for_pixbuf(self, pb)
             else:
@@ -263,7 +269,7 @@ class Pane(AllTreeView):
             size=self.config.cover_size,
             scale_factor=scale_factor,
             callback=callback,
-            cancel=self._cover_cancel
+            cancel=self._cover_cancel,
         )
 
     def __stop_update(self, adj, view):
